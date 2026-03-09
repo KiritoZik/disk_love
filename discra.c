@@ -2,6 +2,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <string.h>
+#include <time.h>
 
 typedef struct BigInt{
     int first_digit;
@@ -37,7 +39,7 @@ int loword(unsigned int value) { return value & ((1U << (sizeof(value) << 2)) - 
 int hiword(unsigned int value) { return (value >> (sizeof(value) << 2 ))&((1U << (sizeof(value) << 2)) - 1); }
 
 
-//копирование, перепроверить на утечку памяти
+//копирование
 BigInt* copy_BigInt(BigInt* num){
     BigInt* new_num = init_BigInt(num->data[0]);
     new_num->first_digit = num->first_digit;
@@ -70,7 +72,7 @@ int compare_BigInt_abs(BigInt* a, BigInt* b){
 }
 
 //сумма в первом слагаемом
-BigInt* add_num(BigInt* a, BigInt* b){
+BigInt* add_num(BigInt* a, BigInt* b){  
     int bits_in_digit = sizeof(int) * 8;
     if(a->data[0] < b->data[0]){
         unsigned int old_count = a->data[0];
@@ -112,7 +114,7 @@ BigInt* add_num(BigInt* a, BigInt* b){
     unsigned int fdigit_a = (unsigned int)((a->first_digit) & ~(1U << (bits_in_digit -1)));
     unsigned int fdigit_b = (unsigned int)((b->first_digit) & ~(1U << (bits_in_digit -1)));
     
-    unsigned int final_fdigit;
+    unsigned int final_fdigit = 0;
     if (a->data[0] == b->data[0]) {
         final_fdigit = fdigit_a + fdigit_b + carry;
     } else {
@@ -145,60 +147,52 @@ BigInt* add(BigInt* a, BigInt* b){
     return res;
 }
 
-
-//Разность в первом слагаемом
-BigInt* sub_num(BigInt* a, BigInt* b){
+//разность в первом слагаемом
+BigInt* sub_num(BigInt* a, BigInt* b) {
     int bits_in_digit = sizeof(int) * 8;
-    
-    if(a->data[0] < b->data[0]){
-        unsigned int old_count = a->data[0];
-        unsigned int new_count = b->data[0];
-        unsigned int* tmp = (unsigned int*)realloc(a->data, (new_count + 1)*sizeof(unsigned int));
-        if(!tmp){
-            fprintf(stderr, "Realloc failed");
-            return NULL;
-        }
-        a->data = tmp;
-
-        unsigned int val = (unsigned int)a->first_digit & ~(1U << (bits_in_digit - 1));
-        if (old_count < new_count) {
-             a->data[old_count + 1] = val;
-             a->first_digit &= (1U << (bits_in_digit - 1));
-             for(unsigned int i = old_count + 2; i <= new_count; i++) a->data[i] = 0;
-        }
-        a->data[0] = new_count;
-    }
-
+    unsigned int sign_mask = (1U << (bits_in_digit - 1));
+    unsigned int a_sign = (unsigned int)a->first_digit & sign_mask;
     unsigned int borrow = 0;
-    for(unsigned int i = 1; i <= a->data[0]; i++){
-        unsigned int value_b = 0;
-        if (i <= b->data[0]) value_b = b->data[i];
-        else if (i == b->data[0] + 1) value_b = (unsigned int)b->first_digit & ~(1U << (bits_in_digit - 1));
 
+    for (unsigned int i = 1; i <= a->data[0]; i++) {
+        unsigned int val_a = a->data[i];
+        unsigned int val_b = 0;
+
+        if (i <= b->data[0]) {
+            val_b = b->data[i];
+        } else if (i == b->data[0] + 1) {
+            val_b = (unsigned int)b->first_digit & ~sign_mask;
+        }
         unsigned int next_borrow = 0;
-        if (a->data[i] < value_b || (a->data[i] == value_b && borrow > 0)) {
+        if (val_a < val_b) {
+            next_borrow = 1;
+        } else if (val_a == val_b && borrow > 0) {
             next_borrow = 1;
         }
-        a->data[i] = a->data[i] - value_b - borrow;
+        
+        a->data[i] = val_a - val_b - borrow;
         borrow = next_borrow;
     }
 
-    a->first_digit = (int)((unsigned int)a->first_digit & (1U << (bits_in_digit - 1)));
+    unsigned int f_a = (unsigned int)a->first_digit & ~sign_mask;
+    unsigned int f_b = 0;
     
-    while(a->data[0] > 0 && a->data[a->data[0]] == 0){
-        a->data[0]--;
+    if (a->data[0] == b->data[0]) {
+        f_b = (unsigned int)b->first_digit & ~sign_mask;
     }
 
-    unsigned int* tmp = (unsigned int*)realloc(a->data, (a->data[0] + 1) * sizeof(unsigned int));
-    if (tmp) {
-        a->data = tmp;
-    }else {
-        fprintf(stderr, "Realloc failed");
-        return NULL;
+    unsigned int res_f = f_a - f_b - borrow;
+
+    a->first_digit = (int)((res_f & ~sign_mask) | a_sign);
+
+    while (a->data[0] > 0 && ((unsigned int)a->first_digit & ~sign_mask) == 0) {
+        unsigned int tail = a->data[a->data[0]]; 
+        a->first_digit = (int)((tail & ~sign_mask) | a_sign);
+        a->data[0]--; 
     }
+
     return a;
 }
-
 
 BigInt* sub(BigInt* a, BigInt* b){
     BigInt* res = copy_BigInt(a);
@@ -209,7 +203,7 @@ BigInt* sub(BigInt* a, BigInt* b){
     return res;
 }
 
-//умножение частей блоко
+//умножение частей блока
 void mul_block(unsigned int a, unsigned int b, unsigned int* hi, unsigned int* lo){
     int bits_in_digit = sizeof(int) * 8;
     unsigned int ah, al, bh, bl;
@@ -293,7 +287,7 @@ BigInt* mul(BigInt* a, BigInt* b){
     return res_mul;
 }
 
-
+//функция для выполнения операций +, -, *
 BigInt* calculate(BigInt* a, BigInt* b, char op) {
     if (op == '*') {
         return mul(a, b);
@@ -385,103 +379,353 @@ BigInt* input_BigInt() {
     return res;
 }
 
-//печать десятичного представления числа
-void print_decimal(BigInt* n) {
-    if (!n) { printf("(null)"); return; }
-    
+//разрезает число a на две части: low (разряды 1..k) и high (остальное)
+void split_BigInt(BigInt* a, int k, BigInt** low, BigInt** high) {
     int bits_in_digit = sizeof(int) * 8;
     unsigned int sign_mask = (1U << (bits_in_digit - 1));
-    int is_zero = 1;
-    if (((unsigned int)n->first_digit & ~sign_mask) != 0) is_zero = 0;
-    for (unsigned int i = 1; i <= n->data[0]; i++) {
-        if (n->data[i] != 0) {
-            is_zero = 0;
-            break;
-        }
+
+    if (k > (int)a->data[0]) {
+        *low = copy_BigInt(a);
+        (*low)->first_digit &= ~sign_mask;
+        *high = init_BigInt(0);
+        return;
     }
+
+    *low = init_BigInt(k - 1);
+    for (int i = 1; i < k; i++) (*low)->data[i] = a->data[i];
+    (*low)->first_digit = (int)(a->data[k] & ~sign_mask);
+
+    *high = init_BigInt(a->data[0] - k);
+    for (int i = 1; i <= (int)a->data[0] - k; i++) {
+        (*high)->data[i] = a->data[i + k];
+    }
+    (*high)->first_digit = (int)((unsigned int)a->first_digit & ~sign_mask);
+}
+
+//умножает число на базу в степени k (сдвиг влево по блокам)
+BigInt* shift_left_blocks(BigInt* num, int k) {
+    if (k <= 0) return copy_BigInt(num);
+    BigInt* res = init_BigInt(num->data[0] + k);
+    for (unsigned int i = 1; i <= num->data[0]; i++) {
+        res->data[i + k] = num->data[i];
+    }
+    res->first_digit = num->first_digit;
+    return res;
+}
+
+//умножение двух бигинтов через Карацубу
+BigInt* karatsuba_recursive(BigInt* a, BigInt* b) {
+    if (a->data[0] < 2 && b->data[0] < 2) {
+        return mul(a, b);
+    }
+
+    int n = (a->data[0] > b->data[0] ? a->data[0] : b->data[0]);
+    int k = n / 2 + 1;
+
+    BigInt *a0, *a1, *b0, *b1;
+    split_BigInt(a, k, &a0, &a1);
+    split_BigInt(b, k, &b0, &b1);
+
+    BigInt* p1 = karatsuba_recursive(a1, b1);
+    BigInt* p2 = karatsuba_recursive(a0, b0);
+
+    BigInt* sum_a = add(a1, a0);
+    BigInt* sum_b = add(b1, b0);
+    BigInt* p3 = karatsuba_recursive(sum_a, sum_b);
+
+    BigInt* mid = sub(p3, p1);
+    sub_num(mid, p2);
+
+    BigInt* p1_sh = shift_left_blocks(p1, 2 * k);
+    BigInt* mid_sh = shift_left_blocks(mid, k);
     
-    if (is_zero) { printf("0"); return; }
+    BigInt* res = add(p1_sh, mid_sh);
+    add_num(res, p2);
+
+    free_BigInt(a0); free_BigInt(a1); free_BigInt(b0); free_BigInt(b1);
+    free_BigInt(p1); free_BigInt(p2); free_BigInt(p3);
+    free_BigInt(sum_a); free_BigInt(sum_b); free_BigInt(mid);
+    free_BigInt(p1_sh); free_BigInt(mid_sh);
+
+    return res;
+}
+
+//задание 3a
+BigInt* task3a(BigInt* n) {
+    BigInt* result = init_BigInt(0);
+    BigInt* current_fact = init_BigInt(0);
+    current_fact->first_digit = 1;
+
+    BigInt* i = init_BigInt(0);
+    i->first_digit = 1;
+
+    BigInt* one = init_BigInt(0);
+    one->first_digit = 1;
+
+    while(compare_BigInt_abs(i, n) <= 0) {
+        mul_num(current_fact, i);
+
+        BigInt* power = sub(n, i);
+        int is_even = (power->data[0] == 0) ? (power->first_digit % 2 == 0) : (power->data[1] % 2 == 0);
+        free_BigInt(power);
+
+        char op = is_even ? '+' : '-';
+
+        BigInt* temp_res = calculate(result, current_fact, op);
+        
+        free_BigInt(result);
+        result = temp_res;
+
+        add_num(i, one);
+    }
+
+    free_BigInt(current_fact);
+    free_BigInt(i);
+    free_BigInt(one);
+
+    return result;
+}
+
+//деление бигинта на 2
+void shift_right_one_bit(BigInt* a) {
+    int bits = sizeof(unsigned int) * 8;
+    unsigned int carry = 0;
+
+    unsigned int next_carry = ((unsigned int)a->first_digit & 1) << (bits - 1);
+    a->first_digit = (int)((unsigned int)a->first_digit >> 1);
+    carry = next_carry;
+
+    for (unsigned int i = a->data[0]; i >= 1; i--) {
+        next_carry = (a->data[i] & 1) << (bits - 1);
+        a->data[i] = (a->data[i] >> 1) | carry;
+        carry = next_carry;
+    }
+
+    if (a->data[0] > 0 && a->first_digit == 0) {
+        a->first_digit = (int)a->data[a->data[0]];
+        a->data[0]--;
+    }
+}
+
+//взятие мод 2^k
+void mod_2n(BigInt* a, BigInt* n) {
+    int bits_in_int = sizeof(unsigned int) * 8; 
+
+    int shift_val = 0;
+    int temp_bits = bits_in_int;
+    while (temp_bits > 1) { temp_bits >>= 1; shift_val++; }
+
+    size_t blocks_to_keep;
+    int extra_bits;
+
+    if (n->data[0] == 0) {
+        blocks_to_keep = (size_t)n->first_digit >> shift_val;
+        extra_bits = n->first_digit & (bits_in_int - 1);
+    } else {
+        unsigned int h = (unsigned int)n->first_digit;
+        unsigned int l = n->data[1];
+        blocks_to_keep = (size_t)((h << (bits_in_int - shift_val)) | (l >> shift_val));
+        extra_bits = l & (bits_in_int - 1);
+    }
+
+    if (a->data[0] + 1 > blocks_to_keep + 1) {
+        a->data[0] = (unsigned int)blocks_to_keep;
+        unsigned int mask = (unsigned int)((1ULL << extra_bits) - 1);
+        if (extra_bits == 0) mask = 0;
+        a->first_digit &= (int)mask;
+    }
+}
+
+//задание 3a
+BigInt* task3b(BigInt* n_bits) {
+    BigInt* base = init_BigInt(0); base->first_digit = 115249;
+    BigInt* res = init_BigInt(0); res->first_digit = 1;
+    
+    BigInt* exp = init_BigInt(0); exp->first_digit = 4183;
+
+    while (!(exp->data[0] == 0 && exp->first_digit == 0)) {
+        int is_odd = (exp->data[0] == 0) ? (exp->first_digit & 1) : (exp->data[1] & 1);
+
+        if (is_odd) {
+            mul_num(res, base);
+            mod_2n(res, n_bits);
+        }
+        
+        mul_num(base, base);
+        mod_2n(base, n_bits);        
+        shift_right_one_bit(exp);
+    }
+
+    free_BigInt(base);
+    free_BigInt(exp);
+    return res;
+}
+
+//печать десятичного представления числа
+void print_decimal(BigInt* n) {
+    if (!n) { printf("0"); return; }
+    int bits_in_digit = sizeof(int) * 8;
+    unsigned int sign_mask = (1U << (bits_in_digit - 1));
+    
+    int zero = 1;
+    if ((n->first_digit & ~sign_mask) != 0) zero = 0;
+    for (unsigned int i = 1; i <= n->data[0] && zero; i++) if (n->data[i] != 0) zero = 0;
+    if (zero) { printf("0"); return; }
     if ((unsigned int)n->first_digit & sign_mask) printf("-");
 
     BigInt* temp = copy_BigInt(n);
     temp->first_digit &= ~sign_mask;
+    char buffer[2048]; int pos = 0;
 
-    size_t est_digits = ((size_t)temp->data[0] * 10) + 20;
-    char* buffer = (char*)malloc(est_digits);
-    if (!buffer) {
-        fprintf(stderr, "Malloc failed\n");
-        free_BigInt(temp);
-        return;
-    }
-    
-    int pos = 0;
     while (1) {
-        int temp_zero = 1;
-        if (temp->first_digit != 0) temp_zero = 0;
-        for (int i = temp->data[0]; i >= 1; i--) {
-            if (temp->data[i] != 0) {
-                temp_zero = 0;
-                break;
-            }
+        unsigned int rem = 0; int all_zero = 1;
+        unsigned int limbs[2] = { (unsigned int)temp->first_digit >> 16, (unsigned int)temp->first_digit & 0xFFFF };
+        for(int j=0; j<2; j++) {
+            unsigned int val = (rem << 16) | limbs[j];
+            limbs[j] = val / 10; rem = val % 10;
         }
-        if (temp_zero) break;
+        temp->first_digit = (int)((limbs[0] << 16) | limbs[1]);
+        if (temp->first_digit > 0) all_zero = 0;
 
-        unsigned long long rem = 0;
-        unsigned long long val = (unsigned int)temp->first_digit;
-        temp->first_digit = (int)(val / 10);
-        rem = val % 10;
-
-        for (int i = temp->data[0]; i >= 1; i--) {
-            unsigned long long cur = (unsigned long long)temp->data[i] + (rem << 32);
-            temp->data[i] = (unsigned int)(cur / 10);
-            rem = cur % 10;
+        for (int i = (int)temp->data[0]; i >= 1; i--) {
+            unsigned int h = temp->data[i] >> 16, l = temp->data[i] & 0xFFFF;
+            unsigned int v1 = (rem << 16) | h;
+            unsigned int q1 = v1 / 10; rem = v1 % 10;
+            unsigned int v2 = (rem << 16) | l;
+            unsigned int q2 = v2 / 10; rem = v2 % 10;
+            temp->data[i] = (q1 << 16) | q2;
+            if (temp->data[i] > 0) all_zero = 0;
         }
-        buffer[pos++] = (char)('0' + rem);
+        buffer[pos++] = (char)(rem + '0');
+        if (all_zero) break;
     }
-
-    for (int i = pos - 1; i >= 0; i--) putchar(buffer[i]);
-    free(buffer);
+    while (pos--) putchar(buffer[pos]);
     free_BigInt(temp);
 }
 
+//бенчарк для умножения классическим алгоритмом и Карацубой
+void benchmark() {
+    printf("\n--- Сравнение Classic vs Karatsuba ---\n");
+    printf("Введите два больших числа для теста.\n");
+    
+    BigInt* a = input_BigInt();
+    BigInt* b = input_BigInt();
+
+    if (!a || !b) {
+        if (a) free_BigInt(a); 
+        if (b) free_BigInt(b);
+        return;
+    }
+
+    clock_t start, end;
+ 
+    BigInt* a_copy1 = copy_BigInt(a);
+    start = clock();
+    BigInt* res1 = mul(a_copy1, b); 
+    end = clock();
+    double t_classic = (double)(end - start) / CLOCKS_PER_SEC;
+
+    BigInt* a_copy2 = copy_BigInt(a);
+    start = clock();
+    BigInt* res2 = karatsuba_recursive(a_copy2, b);
+    end = clock();
+    double t_karatsuba = (double)(end - start) / CLOCKS_PER_SEC;
+
+    printf("\nРезультаты:\n");
+    printf("Обычное (O(n^2)):   %.10f сек.\n", t_classic);
+    printf("Карацуба (O(n^1.58)): %.10f сек.\n", t_karatsuba);
+    
+    if (t_karatsuba > 0) printf("Ускорение: %.10fx\n", t_classic / t_karatsuba);
+
+    free_BigInt(a); free_BigInt(b);
+    free_BigInt(a_copy1); free_BigInt(res1);
+    free_BigInt(a_copy2); free_BigInt(res2);
+    printf("------------\n");
+}
+
+
 int main() {
-    printf("BigInt Calculator\n");
-    printf("Enter expressions. Type 'q' to exit.\n");
-
+    char cmd[64];
     while (1) {
-        printf("> ");
+        printf("\n> ");
+        if (scanf("%63s", cmd) != 1) break;
+
+        if (strcmp(cmd, "q") == 0) break;
+
+        if (strcmp(cmd, "task2") == 0) {
+            benchmark();
+            continue;
+        }
+
+        if (strcmp(cmd, "task3a") == 0) {
+            int n;
+            if (scanf("%d", &n) == 1) {
+                BigInt* n_big = init_BigInt(0); 
+                n_big->first_digit = n;
+
+                BigInt* res = task3a(n_big);
+                printf("af(%d) = ", n); 
+                print_decimal(res); 
+                printf("\n");
+
+                free_BigInt(res);
+                free_BigInt(n_big);
+            }
+            continue;
+        }
+
+        if (strcmp(cmd, "task3b") == 0) {
+            int n;
+            if (scanf("%d", &n) == 1) {
+                BigInt* n_big = init_BigInt(0); 
+                n_big->first_digit = n;
+
+                BigInt* res = task3b(n_big);
+                printf("Result (mod 2^%d) = ", n); 
+                print_decimal(res); 
+                printf("\n");
+
+                free_BigInt(res);
+                free_BigInt(n_big);
+            }
+            continue;
+        }
+
+        for (int i = (int)strlen(cmd) - 1; i >= 0; i--) ungetc(cmd[i], stdin);
+
         BigInt* current_val = input_BigInt();
-        if (!current_val) break;
+        if (!current_val) {
+            int c; while ((c = getchar()) != '\n' && c != EOF);
+            continue;
+        }
 
-        char c;
-        while ((c = getchar()) != '\n' && c != EOF) {
-            if (isspace(c)) continue;
+        while (1) {
+            int op_char = getchar();
+            while (op_char == ' ' || op_char == '\t') op_char = getchar();
 
-            if (c == '+' || c == '-' || c == '*') {
+            if (op_char == '\n' || op_char == EOF) break;
+
+            if (op_char == '+' || op_char == '-' || op_char == '*') {
                 BigInt* next_val = input_BigInt();
-                if (!next_val) {
-                    printf("Error: expected number after '%c'\n", c);
-                    
-                    while ((c = getchar()) != '\n' && c != EOF);
-                    break;
-                }
-                
-                BigInt* res = calculate(current_val, next_val, c);
+                if (!next_val) break;
+
+                BigInt* res = calculate(current_val, next_val, (char)op_char);
                 free_BigInt(current_val);
                 free_BigInt(next_val);
                 current_val = res;
             } else {
-                printf("Unknown operator '%c'\n", c);
-                while ((c = getchar()) != '\n' && c != EOF);
+                printf("Ошибка: неизвестный оператор '%c'\n", op_char);
+                int c; while ((c = getchar()) != '\n' && c != EOF);
                 break;
             }
         }
 
-        printf("Result: ");
-        print_decimal(current_val);
-        printf("\n");
-        free_BigInt(current_val);
+        if (current_val) {
+            printf("Result: ");
+            print_decimal(current_val);
+            printf("\n");
+            free_BigInt(current_val);
+        }
     }
-    
     return 0;
 }
