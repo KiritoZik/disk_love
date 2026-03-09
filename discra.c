@@ -695,7 +695,8 @@ int main() {
 
         BigInt* current_val = input_BigInt();
         if (!current_val) {
-            int c; while ((c = getchar()) != '\n' && c != EOF);
+            int c;
+            while ((c = getchar()) != '\n' && c != EOF);
             continue;
         }
 
